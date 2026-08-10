@@ -1,0 +1,25 @@
+# Environnement Python
+env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Variables d'environnement (contient les identifiants Postgres)
+.env
+
+# Secrets Streamlit
+.streamlit/secrets.toml
+
+# Données collectées (audio + éventuel export) — pas versionnées dans git
+data/audio/original/*
+data/audio/cleaned/*
+!data/audio/original/.gitkeep
+!data/audio/cleaned/.gitkeep
+*.jsonl
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
