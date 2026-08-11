@@ -1,0 +1,16 @@
+env/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+.git/
+.gitignore
+
+.env
+
+# Les données collectées vivent dans un volume monté, pas dans l'image
+data/audio/original/*
+data/audio/cleaned/*
+!data/audio/original/.gitkeep
+!data/audio/cleaned/.gitkeep

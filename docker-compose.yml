@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    container_name: moore-collector
+    env_file:
+      - .env
+    environment:
+      # Depuis le conteneur, "localhost" pointerait vers lui-même : on cible
+      # le conteneur "postgres" existant via l'hôte Docker Desktop.
+      POSTGRES_HOST: host.docker.internal
+    ports:
+      - "8502:8501"
+    volumes:
+      - ./data/audio:/app/data/audio
+    extra_hosts:
+      # Nécessaire sur Docker Engine Linux ; déjà fourni nativement par Docker Desktop.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

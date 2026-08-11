@@ -2,6 +2,7 @@ import io
 from typing import Tuple
 
 from pydub import AudioSegment
+from pydub.effects import normalize as _pydub_normalize
 from pydub.silence import detect_leading_silence, detect_silence
 
 
@@ -56,3 +57,23 @@ def clean_audio(raw_bytes: bytes, original_format: str) -> Tuple[bytes, int]:
     buffer = io.BytesIO()
     capped.export(buffer, format="wav")
     return buffer.getvalue(), silence_removed_ms
+
+
+def apply_trim(raw_bytes: bytes, original_format: str) -> Tuple[bytes, int]:
+    """Alias explicite de clean_audio, utilisé côté admin (bouton « Trim »)."""
+    return clean_audio(raw_bytes, original_format)
+
+
+def apply_normalize(raw_bytes: bytes, original_format: str) -> bytes:
+    """Normalise le volume (gain uniforme jusqu'au niveau max sans écrêtage).
+    Ne modifie jamais le fichier original : retourne une nouvelle version en WAV."""
+    sound = AudioSegment.from_file(io.BytesIO(raw_bytes), format=original_format)
+    normalized = _pydub_normalize(sound)
+    buffer = io.BytesIO()
+    normalized.export(buffer, format="wav")
+    return buffer.getvalue()
+
+
+def get_duration_ms(raw_bytes: bytes, original_format: str) -> int:
+    sound = AudioSegment.from_file(io.BytesIO(raw_bytes), format=original_format)
+    return len(sound)

@@ -1,4 +1,4 @@
-"""Exporte le dataset (phrase FR, traduction mooré, chemins audio) en JSONL."""
+"""Exporte le dataset (phrase FR, traduction mooré, chemins audio) en JSON."""
 import argparse
 import json
 import sys
@@ -20,22 +20,25 @@ def export_dataset(output_path: str, only_validated: bool):
     if only_validated:
         query = query.filter(Recording.status == RecordingStatus.validated)
 
-    count = 0
-    with open(output_path, "w", encoding="utf-8") as f:
-        for recording, translation, sentence in query.all():
-            entry = {
-                "text_fr": sentence.text_fr,
-                "text_moore": translation.text_moore,
-                "audio_original": recording.original_path,
-                "audio_cleaned": recording.cleaned_path,
-                "duration_ms": recording.duration_ms,
-                "silence_trimmed_ms": recording.silence_trimmed_ms,
-                "status": recording.status.value,
-            }
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-            count += 1
+    entries = [
+        {
+            "text_fr": sentence.text_fr,
+            "text_moore": translation.text_moore,
+            "category": sentence.category,
+            "audio_original": recording.original_path,
+            "audio_cleaned": recording.cleaned_path,
+            "duration_ms": recording.duration_ms,
+            "silence_trimmed_ms": recording.silence_trimmed_ms,
+            "status": recording.status.value,
+        }
+        for recording, translation, sentence in query.all()
+    ]
     db.close()
-    print(f"{count} entrées exportées dans {output_path}")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, indent=2)
+
+    print(f"{len(entries)} entrées exportées dans {output_path}")
 
 
 if __name__ == "__main__":

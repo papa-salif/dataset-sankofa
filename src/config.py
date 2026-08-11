@@ -18,3 +18,15 @@ DATABASE_URL = (
 AUDIO_ROOT = os.getenv("AUDIO_ROOT", "data/audio")
 AUDIO_ORIGINAL_DIR = os.path.join(AUDIO_ROOT, "original")
 AUDIO_CLEANED_DIR = os.path.join(AUDIO_ROOT, "cleaned")
+
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+DEFAULT_CATEGORIES = [
+    "Santé",
+    "Commerce",
+    "Agriculture",
+    "Administration",
+    "Éducation",
+    "Vie quotidienne",
+    "Autre",
+]

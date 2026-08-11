@@ -1,6 +1,10 @@
-text_fr,source
-Bonjour, comment vas-tu ?,exemple
-Je m'appelle Awa.,exemple
-Où se trouve le marché ?,exemple
-Il fait très chaud aujourd'hui.,exemple
-Merci beaucoup pour ton aide.,exemple
+text_fr,category,note,source
+Bonjour, comment vas-tu ?,Vie quotidienne,,exemple
+Je m'appelle Awa.,Vie quotidienne,,exemple
+Où se trouve le marché ?,Commerce,,exemple
+Il fait très chaud aujourd'hui.,Vie quotidienne,,exemple
+Merci beaucoup pour ton aide.,Vie quotidienne,,exemple
+Combien coûte ce sac de mil au marché aujourd'hui ?,Commerce,« sac » ici désigne une unité de mesure locale,exemple
+L'eau potable est essentielle pour la santé de la communauté.,Santé,,exemple
+Les pluies de cette année ont été bénéfiques pour les récoltes.,Agriculture,,exemple
+Veuillez remplir ce formulaire avec vos informations.,Administration,,exemple

@@ -32,6 +32,8 @@ class Sentence(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     text_fr = Column(Text, nullable=False)
     source = Column(String(200), nullable=True)
+    category = Column(String(50), nullable=True)
+    note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     translations = relationship("Translation", back_populates="sentence")
