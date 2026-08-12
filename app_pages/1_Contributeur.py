@@ -41,7 +41,7 @@ with st.sidebar:
     )
 
 db = SessionLocal()
-contributor = repository.get_or_create_contributor(db, st.session_state.contributor_name)
+contributor_id = st.session_state.contributor_id
 
 # Barre de progression de la session
 progress = min(st.session_state.session_done / st.session_state.session_size, 1.0)
@@ -60,7 +60,7 @@ if st.session_state.session_done >= st.session_state.session_size:
 # Étape 1 : charger une phrase à traduire
 if st.session_state.sentence is None:
     st.session_state.sentence = repository.next_sentence_for_contributor(
-        db, contributor.id, exclude_ids=st.session_state.seen_ids
+        db, contributor_id, exclude_ids=st.session_state.seen_ids
     )
 
 sentence = st.session_state.sentence
@@ -139,7 +139,7 @@ with col_save:
         translation = repository.create_translation(
             db,
             sentence_id=sentence.id,
-            contributor_id=contributor.id,
+            contributor_id=contributor_id,
             text_moore=st.session_state.translation_text.strip(),
         )
 
@@ -157,7 +157,7 @@ with col_save:
         repository.create_recording(
             db,
             translation_id=translation.id,
-            contributor_id=contributor.id,
+            contributor_id=contributor_id,
             original_path=original_path,
             original_format=original_format,
             duration_ms=duration_ms,

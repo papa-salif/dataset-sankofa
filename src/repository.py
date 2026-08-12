@@ -1,21 +1,62 @@
+import secrets
 from typing import List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from src import storage
 from src.models import Contributor, Recording, RecordingStatus, Sentence, Translation
 
+# Alphabet sans caractères ambigus (pas de 0/O, 1/I/L) pour que le code reste
+# facile à relire/retaper à la main.
+_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-def get_or_create_contributor(db: Session, name: str) -> Contributor:
-    contributor = db.query(Contributor).filter_by(name=name).first()
-    if contributor:
-        return contributor
-    contributor = Contributor(name=name)
+
+def generate_unique_contributor_code(db: Session) -> str:
+    for _ in range(50):
+        code = "CTR-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(4))
+        if not db.query(Contributor).filter_by(code=code).first():
+            return code
+    raise RuntimeError("Impossible de générer un code contributeur unique.")
+
+
+def create_contributor(db: Session, name: str) -> Contributor:
+    """Crée un nouveau contributeur avec un code unique généré automatiquement.
+    C'est ce code, pas le nom affiché, qui identifie réellement la personne."""
+    contributor = Contributor(name=name, code=generate_unique_contributor_code(db))
     db.add(contributor)
     db.commit()
     db.refresh(contributor)
     return contributor
+
+
+def get_contributor_by_code(db: Session, code: str) -> Optional[Contributor]:
+    return db.query(Contributor).filter_by(code=code.strip().upper()).first()
+
+
+def get_contributor_by_id(db: Session, contributor_id: UUID) -> Optional[Contributor]:
+    return db.query(Contributor).filter_by(id=contributor_id).first()
+
+
+def find_contributors_by_name(db: Session, name: str) -> List[Contributor]:
+    """Utilisé pour retrouver un code oublié : recherche par nom affiché
+    (plusieurs comptes peuvent partager le même nom)."""
+    return (
+        db.query(Contributor)
+        .filter(Contributor.name.ilike(name.strip()))
+        .order_by(Contributor.created_at.asc())
+        .all()
+    )
+
+
+def get_or_create_admin_contributor(db: Session) -> Contributor:
+    """Identité réservée utilisée quand un admin contribue lui-même via
+    l'espace Contribuer — un seul slot fixe, pas de code à retenir."""
+    contributor = db.query(Contributor).filter_by(name="Admin").first()
+    if contributor:
+        return contributor
+    return create_contributor(db, "Admin")
 
 
 def next_sentence_for_contributor(
@@ -165,6 +206,47 @@ def next_recording_for_review(
     )
 
 
+def get_contributor_recording_summary(
+    db: Session, only_validated: bool = True
+) -> List[Tuple[Contributor, int, int]]:
+    """Retourne, par contributeur, (contributor, nombre d'enregistrements,
+    durée totale en ms) — sert de base au calcul du montant à verser."""
+    query = (
+        db.query(
+            Contributor,
+            func.count(Recording.id),
+            func.coalesce(func.sum(Recording.duration_ms), 0),
+        )
+        .join(Recording, Recording.contributor_id == Contributor.id)
+    )
+    if only_validated:
+        query = query.filter(Recording.status == RecordingStatus.validated)
+    return (
+        query.group_by(Contributor.id)
+        .order_by(func.coalesce(func.sum(Recording.duration_ms), 0).desc())
+        .all()
+    )
+
+
+def get_contributor_own_summary(db: Session, contributor_id: UUID) -> dict:
+    """Répartition des enregistrements d'UN contributeur par statut, avec la
+    durée totale par statut (en ms) — sert à lui montrer ses propres gains."""
+    rows = (
+        db.query(
+            Recording.status,
+            func.count(Recording.id),
+            func.coalesce(func.sum(Recording.duration_ms), 0),
+        )
+        .filter(Recording.contributor_id == contributor_id)
+        .group_by(Recording.status)
+        .all()
+    )
+    summary = {status.value: {"count": 0, "duration_ms": 0} for status in RecordingStatus}
+    for status, count, duration_ms in rows:
+        summary[status.value] = {"count": count, "duration_ms": duration_ms}
+    return summary
+
+
 def validate_all_pending_recordings(db: Session) -> int:
     """Valide en une fois tous les enregistrements en attente de révision
     (sans passer par Trim/Normalize individuel). Retourne le nombre validé."""
@@ -202,6 +284,81 @@ def update_recording_cleaned_audio(
         db.commit()
         db.refresh(recording)
     return recording
+
+
+def get_translations_with_recordings(db: Session, sentence_id: UUID) -> List[Translation]:
+    return (
+        db.query(Translation)
+        .filter(Translation.sentence_id == sentence_id)
+        .order_by(Translation.created_at.asc())
+        .all()
+    )
+
+
+def update_sentence(
+    db: Session,
+    sentence_id: UUID,
+    text_fr: str,
+    category: Optional[str],
+    note: Optional[str],
+) -> Optional[Sentence]:
+    sentence = db.query(Sentence).filter_by(id=sentence_id).first()
+    if not sentence:
+        return None
+    sentence.text_fr = text_fr
+    sentence.category = category
+    sentence.note = note
+    db.commit()
+    db.refresh(sentence)
+    return sentence
+
+
+def update_translation_text(
+    db: Session, translation_id: UUID, text_moore: str
+) -> Optional[Translation]:
+    translation = db.query(Translation).filter_by(id=translation_id).first()
+    if not translation:
+        return None
+    translation.text_moore = text_moore
+    db.commit()
+    db.refresh(translation)
+    return translation
+
+
+def delete_recording(db: Session, recording_id: UUID) -> bool:
+    recording = db.query(Recording).filter_by(id=recording_id).first()
+    if not recording:
+        return False
+    storage.delete_audio_files(recording.original_path, recording.cleaned_path)
+    db.delete(recording)
+    db.commit()
+    return True
+
+
+def delete_translation(db: Session, translation_id: UUID) -> bool:
+    translation = db.query(Translation).filter_by(id=translation_id).first()
+    if not translation:
+        return False
+    for recording in list(translation.recordings):
+        storage.delete_audio_files(recording.original_path, recording.cleaned_path)
+        db.delete(recording)
+    db.delete(translation)
+    db.commit()
+    return True
+
+
+def delete_sentence(db: Session, sentence_id: UUID) -> bool:
+    sentence = db.query(Sentence).filter_by(id=sentence_id).first()
+    if not sentence:
+        return False
+    for translation in list(sentence.translations):
+        for recording in list(translation.recordings):
+            storage.delete_audio_files(recording.original_path, recording.cleaned_path)
+            db.delete(recording)
+        db.delete(translation)
+    db.delete(sentence)
+    db.commit()
+    return True
 
 
 def get_stats(db: Session) -> dict:

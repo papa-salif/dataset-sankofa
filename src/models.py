@@ -18,7 +18,11 @@ class Contributor(Base):
     __tablename__ = "contributors"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name = Column(String(120), nullable=False, unique=True)
+    name = Column(String(120), nullable=False)
+    # Identité réelle et unique du contributeur (donnée à l'avance ou générée
+    # à la première connexion) — "name" n'est qu'un libellé d'affichage,
+    # deux personnes différentes peuvent choisir le même.
+    code = Column(String(20), nullable=False, unique=True)
     email = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

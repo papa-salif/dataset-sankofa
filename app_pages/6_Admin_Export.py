@@ -4,7 +4,7 @@ import streamlit as st
 
 from src import repository
 from src.db import SessionLocal
-from src.models import Recording, RecordingStatus, Sentence, Translation
+from src.export_utils import build_dataset_entries, build_dataset_zip
 
 st.title("📤 Export")
 
@@ -13,33 +13,26 @@ st.subheader("Dataset annoté (phrase, traduction, audio)")
 only_validated = st.checkbox("Uniquement les enregistrements validés", value=True)
 
 db = SessionLocal()
-query = (
-    db.query(Recording, Translation, Sentence)
-    .join(Translation, Recording.translation_id == Translation.id)
-    .join(Sentence, Translation.sentence_id == Sentence.id)
-)
-if only_validated:
-    query = query.filter(Recording.status == RecordingStatus.validated)
-
-entries = [
-    {
-        "text_fr": sentence.text_fr,
-        "text_moore": translation.text_moore,
-        "category": sentence.category,
-        "audio_original": recording.original_path,
-        "audio_cleaned": recording.cleaned_path,
-        "duration_ms": recording.duration_ms,
-        "silence_trimmed_ms": recording.silence_trimmed_ms,
-        "status": recording.status.value,
-    }
-    for recording, translation, sentence in query.all()
-]
+entries = build_dataset_entries(db, only_validated=only_validated)
+zip_bytes, skipped = build_dataset_zip(db, only_validated=only_validated)
+db.close()
 
 st.write(f"{len(entries)} entrées prêtes à l'export.")
+if skipped:
+    st.warning(f"{skipped} enregistrement(s) ignoré(s) dans le ZIP : fichier audio introuvable sur disque.")
 
 if entries:
-    st.download_button(
-        "⬇️ Télécharger le dataset (JSON)",
+    col_zip, col_json = st.columns(2)
+    col_zip.download_button(
+        "📦 Télécharger l'archive complète (ZIP + audio)",
+        data=zip_bytes,
+        file_name="dataset_moore.zip",
+        mime="application/zip",
+        type="primary",
+        help="Recommandé pour l'entraînement : contient un manifest.json et tous les fichiers audio.",
+    )
+    col_json.download_button(
+        "⬇️ Métadonnées seules (JSON, sans audio)",
         data=json.dumps(entries, ensure_ascii=False, indent=2),
         file_name="dataset_moore.json",
         mime="application/json",
@@ -49,6 +42,7 @@ if entries:
 st.divider()
 st.subheader("Phrases encore à traduire")
 
+db = SessionLocal()
 untranslated = repository.list_untranslated_sentences(db)
 db.close()
 
