@@ -6,7 +6,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from src import storage
-from src.models import Contributor, Recording, RecordingStatus, Sentence, Translation
+from src.models import Contributor, Payment, Recording, RecordingStatus, Sentence, Translation
 
 # Alphabet sans caractères ambigus (pas de 0/O, 1/I/L) pour que le code reste
 # facile à relire/retaper à la main.
@@ -88,12 +88,12 @@ def next_sentence_for_contributor(
 
 
 def create_translation(
-    db: Session, sentence_id: UUID, contributor_id: UUID, text_moore: str
+    db: Session, sentence_id: UUID, contributor_id: UUID, text_moore: Optional[str] = None
 ) -> Translation:
     translation = Translation(
         sentence_id=sentence_id,
         contributor_id=contributor_id,
-        text_moore=text_moore,
+        text_moore=text_moore or None,
     )
     db.add(translation)
     db.commit()
@@ -160,15 +160,30 @@ def list_sentences_with_counts(
     category: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
+    sort_by: str = "recent",
 ) -> Tuple[List[Tuple[Sentence, int]], int]:
-    """Retourne (liste de (phrase, nombre_de_traductions), total) pour la file de traduction."""
+    """Retourne (liste de (phrase, nombre_de_traductions), total).
+
+    sort_by :
+      - "recent" (défaut) : les plus récentes d'abord.
+      - "has_audio" : les phrases ayant au moins un enregistrement audio
+        d'abord, puis les plus récentes.
+    """
     translation_counts = (
         db.query(Translation.sentence_id, func.count(Translation.id).label("cnt"))
         .group_by(Translation.sentence_id)
         .subquery()
     )
-    query = db.query(Sentence, func.coalesce(translation_counts.c.cnt, 0)).outerjoin(
-        translation_counts, Sentence.id == translation_counts.c.sentence_id
+    recording_counts = (
+        db.query(Translation.sentence_id, func.count(Recording.id).label("cnt"))
+        .join(Recording, Recording.translation_id == Translation.id)
+        .group_by(Translation.sentence_id)
+        .subquery()
+    )
+    query = (
+        db.query(Sentence, func.coalesce(translation_counts.c.cnt, 0))
+        .outerjoin(translation_counts, Sentence.id == translation_counts.c.sentence_id)
+        .outerjoin(recording_counts, Sentence.id == recording_counts.c.sentence_id)
     )
     if search:
         query = query.filter(Sentence.text_fr.ilike(f"%{search}%"))
@@ -176,12 +191,16 @@ def list_sentences_with_counts(
         query = query.filter(Sentence.category == category)
 
     total = query.count()
-    rows = (
-        query.order_by(Sentence.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
+
+    if sort_by == "has_audio":
+        query = query.order_by(
+            func.coalesce(recording_counts.c.cnt, 0).desc(),
+            Sentence.created_at.desc(),
+        )
+    else:
+        query = query.order_by(Sentence.created_at.desc())
+
+    rows = query.offset(offset).limit(limit).all()
     return rows, total
 
 
@@ -206,31 +225,24 @@ def next_recording_for_review(
     )
 
 
-def get_contributor_recording_summary(
-    db: Session, only_validated: bool = True
-) -> List[Tuple[Contributor, int, int]]:
-    """Retourne, par contributeur, (contributor, nombre d'enregistrements,
-    durée totale en ms) — sert de base au calcul du montant à verser."""
-    query = (
-        db.query(
-            Contributor,
-            func.count(Recording.id),
-            func.coalesce(func.sum(Recording.duration_ms), 0),
-        )
-        .join(Recording, Recording.contributor_id == Contributor.id)
-    )
-    if only_validated:
-        query = query.filter(Recording.status == RecordingStatus.validated)
+def count_text_translations(db: Session, contributor_id: UUID) -> int:
+    """Nombre de traductions texte (mooré non vide) faites par ce contributeur
+    — facturées indépendamment de l'audio."""
     return (
-        query.group_by(Contributor.id)
-        .order_by(func.coalesce(func.sum(Recording.duration_ms), 0).desc())
-        .all()
+        db.query(func.count(Translation.id))
+        .filter(
+            Translation.contributor_id == contributor_id,
+            Translation.text_moore.isnot(None),
+            Translation.text_moore != "",
+        )
+        .scalar()
     )
 
 
 def get_contributor_own_summary(db: Session, contributor_id: UUID) -> dict:
     """Répartition des enregistrements d'UN contributeur par statut, avec la
-    durée totale par statut (en ms) — sert à lui montrer ses propres gains."""
+    durée totale par statut (en ms), plus le nombre de traductions texte —
+    sert à lui montrer ses propres gains."""
     rows = (
         db.query(
             Recording.status,
@@ -244,6 +256,7 @@ def get_contributor_own_summary(db: Session, contributor_id: UUID) -> dict:
     summary = {status.value: {"count": 0, "duration_ms": 0} for status in RecordingStatus}
     for status, count, duration_ms in rows:
         summary[status.value] = {"count": count, "duration_ms": duration_ms}
+    summary["text_translations"] = count_text_translations(db, contributor_id)
     return summary
 
 
@@ -314,12 +327,12 @@ def update_sentence(
 
 
 def update_translation_text(
-    db: Session, translation_id: UUID, text_moore: str
+    db: Session, translation_id: UUID, text_moore: Optional[str]
 ) -> Optional[Translation]:
     translation = db.query(Translation).filter_by(id=translation_id).first()
     if not translation:
         return None
-    translation.text_moore = text_moore
+    translation.text_moore = text_moore or None
     db.commit()
     db.refresh(translation)
     return translation
@@ -377,3 +390,111 @@ def get_stats(db: Session) -> dict:
         .scalar(),
         "contributors": db.query(func.count(Contributor.id)).scalar(),
     }
+
+
+def list_contributors_overview(db: Session) -> List[dict]:
+    """Vue d'ensemble par contributeur : traductions, enregistrements par
+    statut (avec durée), dernière activité, total déjà versé."""
+    contributors = db.query(Contributor).order_by(Contributor.created_at.asc()).all()
+
+    overview = []
+    for contributor in contributors:
+        translation_count = (
+            db.query(func.count(Translation.id))
+            .filter(Translation.contributor_id == contributor.id)
+            .scalar()
+        )
+
+        recording_rows = (
+            db.query(
+                Recording.status,
+                func.count(Recording.id),
+                func.coalesce(func.sum(Recording.duration_ms), 0),
+            )
+            .filter(Recording.contributor_id == contributor.id)
+            .group_by(Recording.status)
+            .all()
+        )
+        status_summary = {status.value: {"count": 0, "duration_ms": 0} for status in RecordingStatus}
+        for status, count, duration_ms in recording_rows:
+            status_summary[status.value] = {"count": count, "duration_ms": duration_ms}
+
+        last_translation = (
+            db.query(func.max(Translation.created_at))
+            .filter(Translation.contributor_id == contributor.id)
+            .scalar()
+        )
+        last_recording = (
+            db.query(func.max(Recording.created_at))
+            .filter(Recording.contributor_id == contributor.id)
+            .scalar()
+        )
+        last_activity = max((d for d in [last_translation, last_recording] if d), default=None)
+
+        overview.append(
+            {
+                "contributor": contributor,
+                "translation_count": translation_count,
+                "text_translation_count": count_text_translations(db, contributor.id),
+                "status_summary": status_summary,
+                "last_activity": last_activity,
+                "total_paid": get_total_paid(db, contributor.id),
+            }
+        )
+    return overview
+
+
+def get_contributor_translations(db: Session, contributor_id: UUID) -> List[Translation]:
+    return (
+        db.query(Translation)
+        .filter(Translation.contributor_id == contributor_id)
+        .order_by(Translation.created_at.desc())
+        .all()
+    )
+
+
+def create_payment(
+    db: Session,
+    contributor_id: UUID,
+    amount: float,
+    currency: Optional[str] = None,
+    note: Optional[str] = None,
+    recorded_by_id: Optional[UUID] = None,
+) -> Payment:
+    payment = Payment(
+        contributor_id=contributor_id,
+        amount=amount,
+        currency=currency,
+        note=note,
+        recorded_by_id=recorded_by_id,
+    )
+    db.add(payment)
+    db.commit()
+    db.refresh(payment)
+    return payment
+
+
+def get_total_paid(db: Session, contributor_id: UUID) -> float:
+    return (
+        db.query(func.coalesce(func.sum(Payment.amount), 0.0))
+        .filter(Payment.contributor_id == contributor_id)
+        .scalar()
+    )
+
+
+def list_payments(db: Session, contributor_id: UUID) -> List[Payment]:
+    return (
+        db.query(Payment)
+        .filter(Payment.contributor_id == contributor_id)
+        .order_by(Payment.paid_at.desc())
+        .all()
+    )
+
+
+def delete_payment(db: Session, payment_id: UUID) -> bool:
+    payment = db.query(Payment).filter_by(id=payment_id).first()
+    if not payment:
+        return False
+    db.delete(payment)
+    db.commit()
+    return True

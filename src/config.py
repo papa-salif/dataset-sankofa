@@ -4,28 +4,53 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
-POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "moore_dataset")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+
+def _get(key: str, default: str = "") -> str:
+    """Lit d'abord les secrets Streamlit Cloud (st.secrets), sinon une
+    variable d'environnement / le fichier .env (déploiement Docker).
+    Le try/except couvre les environnements sans secrets.toml du tout
+    (scripts CLI, conteneurs Docker) où st.secrets n'a rien à lire."""
+    try:
+        import streamlit as st
+
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
+POSTGRES_HOST = _get("POSTGRES_HOST", "localhost")
+POSTGRES_PORT = _get("POSTGRES_PORT", "5432")
+POSTGRES_DB = _get("POSTGRES_DB", "moore_dataset")
+POSTGRES_USER = _get("POSTGRES_USER", "postgres")
+POSTGRES_PASSWORD = _get("POSTGRES_PASSWORD", "")
+# "prefer" en local (Docker/postgres sans SSL) ; mettre "require" pour Neon
+# ou tout autre fournisseur managé qui exige une connexion chiffrée.
+POSTGRES_SSLMODE = _get("POSTGRES_SSLMODE", "prefer")
 
 DATABASE_URL = (
     f"postgresql+psycopg2://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}?sslmode={POSTGRES_SSLMODE}"
 )
 
-AUDIO_ROOT = os.getenv("AUDIO_ROOT", "data/audio")
-# Toujours des "/" (pas os.path.join) : ces chemins sont stockés en base et
-# doivent rester lisibles aussi bien depuis Windows (dev local) que Linux
-# (conteneurs) — un antislash n'est pas un séparateur de chemin sous Linux.
-AUDIO_ORIGINAL_DIR = f"{AUDIO_ROOT}/original"
-AUDIO_CLEANED_DIR = f"{AUDIO_ROOT}/cleaned"
+AUDIO_KEY_PREFIX = _get("AUDIO_KEY_PREFIX", "audio")
 
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+# Stockage audio (Cloudinary, resource_type="raw" pour ne rien transformer).
+# Les fichiers ne vivent plus sur le disque local : indispensable dès que
+# l'app tourne sur un environnement au système de fichiers éphémère
+# (ex. Streamlit Community Cloud).
+CLOUDINARY_CLOUD_NAME = _get("CLOUDINARY_CLOUD_NAME", "")
+CLOUDINARY_API_KEY = _get("CLOUDINARY_API_KEY", "")
+CLOUDINARY_API_SECRET = _get("CLOUDINARY_API_SECRET", "")
 
-CURRENCY = os.getenv("CURRENCY", "FCFA")
-DEFAULT_RATE_PER_MINUTE = float(os.getenv("DEFAULT_RATE_PER_MINUTE", "0"))
+ADMIN_PASSWORD = _get("ADMIN_PASSWORD", "")
+
+CURRENCY = _get("CURRENCY", "FCFA")
+DEFAULT_RATE_PER_MINUTE = float(_get("DEFAULT_RATE_PER_MINUTE", "0"))
+# Tarif forfaitaire par traduction texte (indépendant de l'audio, qui se
+# facture à la durée) — payé dès qu'un texte mooré est fourni pour une phrase.
+DEFAULT_RATE_PER_TEXT_TRANSLATION = float(_get("DEFAULT_RATE_PER_TEXT_TRANSLATION", "0"))
 
 DEFAULT_CATEGORIES = [
     "Santé",

@@ -1,5 +1,3 @@
-import os
-
 import streamlit as st
 
 from src import repository, storage
@@ -13,12 +11,10 @@ st.title("🎧 Audio Lab — révision des enregistrements")
 def load_working_audio(recording):
     """(ré)initialise l'audio de travail à partir de la version nettoyée
     si elle existe, sinon de l'original. Ne modifie jamais le fichier original."""
-    with open(recording.original_path, "rb") as f:
-        original_bytes = f.read()
+    original_bytes = storage.read_audio_file(recording.original_path)
 
-    if recording.cleaned_path and os.path.exists(recording.cleaned_path):
-        with open(recording.cleaned_path, "rb") as f:
-            working_bytes = f.read()
+    if recording.cleaned_path and storage.audio_exists(recording.cleaned_path):
+        working_bytes = storage.read_audio_file(recording.cleaned_path)
         working_format = "wav"
         is_modified = True
     else:
@@ -76,7 +72,7 @@ if sentence.category:
     st.caption(f"Catégorie : {sentence.category}")
 
 st.subheader("Traduction en mooré")
-st.write(translation.text_moore)
+st.write(translation.text_moore or "_(pas de texte fourni, audio seulement)_")
 if recording.contributor:
     st.caption(f"Par {recording.contributor.name}")
 

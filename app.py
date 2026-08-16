@@ -50,22 +50,35 @@ def show_login():
 
     if step == "name":
         st.write("Entre ton nom pour continuer.")
-        name = st.text_input("Ton nom")
-        if st.button("Continuer", disabled=not name.strip()):
-            st.session_state.pending_name = name.strip()
-            if name.strip().lower() == "admin":
-                _go_to_step("admin_password")
+        with st.form("login_name_form"):
+            name = st.text_input("Ton nom")
+            submitted = st.form_submit_button("Continuer")
+        if submitted:
+            clean_name = name.strip()
+            if not clean_name:
+                st.error("Entre ton nom pour continuer.")
             else:
-                _go_to_step("contributor_next")
+                st.session_state.pending_name = clean_name
+                if clean_name.lower() == "admin":
+                    _go_to_step("admin_password")
+                else:
+                    _go_to_step("contributor_next")
 
     elif step == "admin_password":
         st.write(f"Bonjour **{st.session_state.pending_name}**, entre le mot de passe admin.")
-        password = st.text_input("Mot de passe admin", type="password")
-        col_back, col_go = st.columns([1, 3])
-        if col_back.button("← Retour"):
+        # "Retour" est hors formulaire : le champ mot de passe est une saisie
+        # sur une ligne, donc Entrée soumet le formulaire — avec un seul
+        # form_submit_button ("Continuer") dedans, Entrée déclenche toujours
+        # la bonne action, sans ambiguïté avec un autre bouton.
+        with st.form("login_admin_form"):
+            password = st.text_input("Mot de passe admin", type="password")
+            go_clicked = st.form_submit_button("Continuer")
+        if st.button("← Retour"):
             _go_to_step("name")
-        if col_go.button("Continuer", disabled=not password):
-            if not ADMIN_PASSWORD:
+        if go_clicked:
+            if not password:
+                st.error("Entre le mot de passe admin.")
+            elif not ADMIN_PASSWORD:
                 st.error("Aucun ADMIN_PASSWORD n'est défini dans le fichier .env.")
             elif password == ADMIN_PASSWORD:
                 token = admin_tokens.issue_token()
@@ -82,16 +95,21 @@ def show_login():
         name = st.session_state.pending_name
         st.write(f"Bonjour **{name}** !")
 
-        code = st.text_input("As-tu déjà un code ? Entre-le ici (sinon laisse vide).", placeholder="CTR-XXXX")
-        if st.button("Valider mon code", disabled=not code.strip()):
-            db = SessionLocal()
-            contributor = repository.get_contributor_by_code(db, code)
-            db.close()
-            if contributor:
-                _login_contributor(contributor)
-                st.rerun()
+        with st.form("login_code_form"):
+            code = st.text_input("As-tu déjà un code ? Entre-le ici (sinon laisse vide).", placeholder="CTR-XXXX")
+            code_submitted = st.form_submit_button("Valider mon code")
+        if code_submitted:
+            if not code.strip():
+                st.error("Entre un code, ou utilise une des options ci-dessous si tu n'en as pas.")
             else:
-                st.error("Ce code n'existe pas.")
+                db = SessionLocal()
+                contributor = repository.get_contributor_by_code(db, code)
+                db.close()
+                if contributor:
+                    _login_contributor(contributor)
+                    st.rerun()
+                else:
+                    st.error("Ce code n'existe pas.")
 
         st.divider()
         col_create, col_recover, col_back = st.columns(3)
@@ -157,6 +175,7 @@ if st.session_state.role == "admin":
         st.Page("app_pages/6_Admin_Export.py", title="Export", icon="📤"),
         st.Page("app_pages/7_Admin_Paiements.py", title="Paiements", icon="💰"),
         st.Page("app_pages/8_Admin_Gestion.py", title="Gestion", icon="🗂️"),
+        st.Page("app_pages/9_Admin_Contributeurs.py", title="Contributeurs", icon="👥"),
         st.Page("app_pages/1_Contributeur.py", title="Contribuer", icon="🧑"),
         st.Page("app_pages/1_Contributeur_Gains.py", title="Mes gains", icon="💵"),
     ]

@@ -4,6 +4,8 @@ from src import repository, storage
 from src.audio_processing import clean_audio, get_duration_ms
 from src.db import SessionLocal
 
+MODES = ["Texte + Audio", "Texte seulement", "Audio seulement"]
+
 
 def init_state():
     defaults = {
@@ -11,10 +13,10 @@ def init_state():
         "session_done": 0,
         "seen_ids": set(),
         "sentence": None,
-        "translation_text": "",
         "raw_audio": None,
         "cleaned_audio": None,
         "silence_removed_ms": None,
+        "contribution_mode": MODES[0],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -23,7 +25,6 @@ def init_state():
 
 def reset_for_next_sentence():
     st.session_state.sentence = None
-    st.session_state.translation_text = ""
     st.session_state.raw_audio = None
     st.session_state.cleaned_audio = None
     st.session_state.silence_removed_ms = None
@@ -39,6 +40,16 @@ with st.sidebar:
         "Nombre de phrases pour cette session", min_value=1, max_value=200,
         value=st.session_state.session_size,
     )
+    st.session_state.contribution_mode = st.radio(
+        "Type de contribution",
+        MODES,
+        index=MODES.index(st.session_state.contribution_mode),
+        help="Choisis si tu veux faire seulement le texte, seulement l'audio, ou les deux.",
+    )
+
+mode = st.session_state.contribution_mode
+want_text = mode in ("Texte + Audio", "Texte seulement")
+want_audio = mode in ("Texte + Audio", "Audio seulement")
 
 db = SessionLocal()
 contributor_id = st.session_state.contributor_id
@@ -77,93 +88,108 @@ st.markdown(f"### {sentence.text_fr}")
 if sentence.note:
     st.info(f"💡 {sentence.note}")
 
-# Étape 2 : traduction en mooré
-st.subheader("Étape 1 — Traduction en mooré")
-st.session_state.translation_text = st.text_area(
-    "Écris l'équivalent en mooré",
-    value=st.session_state.translation_text,
-    height=100,
-)
+step_number = 1
 
-# Étape 3 : enregistrement audio
-# La clé change à chaque phrase pour forcer Streamlit à remonter un widget
-# neuf (nouveau flux micro) plutôt que de réutiliser celui de la phrase précédente.
-st.subheader("Étape 2 — Enregistrement audio")
-audio_value = st.audio_input(
-    "Enregistre-toi en train de lire la phrase en mooré",
-    key=f"audio_input_{sentence.id}",
-)
+if want_audio:
+    # La clé change à chaque phrase pour forcer Streamlit à remonter un widget
+    # neuf (nouveau flux micro) plutôt que de réutiliser celui de la phrase précédente.
+    st.subheader(f"Étape {step_number} — Enregistrement audio")
+    step_number += 1
+    audio_value = st.audio_input(
+        "Enregistre-toi en train de lire la phrase en mooré",
+        key=f"audio_input_{sentence.id}",
+    )
 
-if audio_value is not None:
-    new_bytes = audio_value.getvalue()
-    if not st.session_state.raw_audio or st.session_state.raw_audio["bytes"] != new_bytes:
-        st.session_state.raw_audio = {"bytes": new_bytes, "mime": audio_value.type}
+    if audio_value is not None:
+        new_bytes = audio_value.getvalue()
+        if not st.session_state.raw_audio or st.session_state.raw_audio["bytes"] != new_bytes:
+            st.session_state.raw_audio = {"bytes": new_bytes, "mime": audio_value.type}
+            st.session_state.cleaned_audio = None
+            st.session_state.silence_removed_ms = None
+    else:
+        st.session_state.raw_audio = None
         st.session_state.cleaned_audio = None
         st.session_state.silence_removed_ms = None
+
+    if st.session_state.raw_audio:
+        st.caption("Enregistrement original (jamais modifié)")
+        st.audio(st.session_state.raw_audio["bytes"])
+
+        if st.button("🧹 Nettoyer les silences"):
+            ext = storage.MIME_TO_EXT.get(st.session_state.raw_audio["mime"], "wav")
+            cleaned_bytes, silence_removed_ms = clean_audio(
+                st.session_state.raw_audio["bytes"], ext
+            )
+            st.session_state.cleaned_audio = cleaned_bytes
+            st.session_state.silence_removed_ms = silence_removed_ms
+
+        if st.session_state.cleaned_audio:
+            st.caption(f"Version nettoyée — silence réduit de {st.session_state.silence_removed_ms} ms")
+            st.audio(st.session_state.cleaned_audio)
 else:
     st.session_state.raw_audio = None
     st.session_state.cleaned_audio = None
     st.session_state.silence_removed_ms = None
 
-if st.session_state.raw_audio:
-    st.caption("Enregistrement original (jamais modifié)")
-    st.audio(st.session_state.raw_audio["bytes"])
-
-    if st.button("🧹 Nettoyer les silences"):
-        ext = storage.MIME_TO_EXT.get(st.session_state.raw_audio["mime"], "wav")
-        cleaned_bytes, silence_removed_ms = clean_audio(
-            st.session_state.raw_audio["bytes"], ext
-        )
-        st.session_state.cleaned_audio = cleaned_bytes
-        st.session_state.silence_removed_ms = silence_removed_ms
-
-    if st.session_state.cleaned_audio:
-        st.caption(f"Version nettoyée — silence réduit de {st.session_state.silence_removed_ms} ms")
-        st.audio(st.session_state.cleaned_audio)
-
-# Étape 4 : skip ou validation
+# Traduction + validation, regroupées dans un formulaire pour que le texte
+# tapé soit bien pris en compte au clic, sans devoir cliquer ailleurs ou
+# appuyer sur Entrée avant de valider.
 st.divider()
-col_skip, col_save = st.columns([1, 2])
+st.subheader(f"Étape {step_number} — Traduction en mooré" if want_text else "Validation")
 
-with col_skip:
-    if st.button("⏭️ Passer cette phrase"):
-        st.session_state.seen_ids.add(sentence.id)
-        reset_for_next_sentence()
-        db.close()
-        st.rerun()
+with st.form(key=f"translation_form_{sentence.id}"):
+    if want_text:
+        translation_text = st.text_area("Écris l'équivalent en mooré", height=100)
+    else:
+        translation_text = ""
+        st.caption("Mode « Audio seulement » : pas de texte à saisir pour cette phrase.")
+    col_skip, col_save = st.columns([1, 2])
+    skip_clicked = col_skip.form_submit_button("⏭️ Passer cette phrase")
+    save_clicked = col_save.form_submit_button("✅ Valider et enregistrer", type="primary")
 
-can_save = bool(st.session_state.translation_text.strip()) and bool(st.session_state.raw_audio)
+if skip_clicked:
+    st.session_state.seen_ids.add(sentence.id)
+    reset_for_next_sentence()
+    db.close()
+    st.rerun()
 
-with col_save:
-    if st.button("✅ Valider et enregistrer", disabled=not can_save, type="primary"):
+if save_clicked:
+    clean_text = translation_text.strip() if want_text else None
+
+    if want_text and not clean_text:
+        st.error("Écris la traduction en mooré avant de valider.")
+    elif want_audio and not st.session_state.raw_audio:
+        st.error("Enregistre l'audio avant de valider.")
+    else:
         translation = repository.create_translation(
             db,
             sentence_id=sentence.id,
             contributor_id=contributor_id,
-            text_moore=st.session_state.translation_text.strip(),
+            text_moore=clean_text,
         )
 
-        original_path, original_format = storage.save_original_audio(
-            st.session_state.raw_audio["bytes"], st.session_state.raw_audio["mime"]
-        )
-        duration_ms = get_duration_ms(st.session_state.raw_audio["bytes"], original_format)
-
-        cleaned_path = None
-        if st.session_state.cleaned_audio:
-            cleaned_path = storage.save_cleaned_audio(
-                st.session_state.cleaned_audio, base_id=str(translation.id)
+        if want_audio and st.session_state.raw_audio:
+            original_path, original_format = storage.save_original_audio(
+                st.session_state.raw_audio["bytes"], st.session_state.raw_audio["mime"]
             )
+            duration_ms = get_duration_ms(st.session_state.raw_audio["bytes"], original_format)
 
-        repository.create_recording(
-            db,
-            translation_id=translation.id,
-            contributor_id=contributor_id,
-            original_path=original_path,
-            original_format=original_format,
-            duration_ms=duration_ms,
-            cleaned_path=cleaned_path,
-            silence_trimmed_ms=st.session_state.silence_removed_ms,
-        )
+            cleaned_path = None
+            if st.session_state.cleaned_audio:
+                cleaned_path = storage.save_cleaned_audio(
+                    st.session_state.cleaned_audio, base_id=str(translation.id)
+                )
+
+            repository.create_recording(
+                db,
+                translation_id=translation.id,
+                contributor_id=contributor_id,
+                original_path=original_path,
+                original_format=original_format,
+                duration_ms=duration_ms,
+                cleaned_path=cleaned_path,
+                silence_trimmed_ms=st.session_state.silence_removed_ms,
+            )
 
         st.session_state.session_done += 1
         st.session_state.seen_ids.add(sentence.id)

@@ -1,7 +1,7 @@
 import enum
 import uuid
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -49,7 +49,8 @@ class Translation(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     sentence_id = Column(UUID(as_uuid=True), ForeignKey("sentences.id"), nullable=False)
     contributor_id = Column(UUID(as_uuid=True), ForeignKey("contributors.id"), nullable=True)
-    text_moore = Column(Text, nullable=False)
+    # Nul si le contributeur a choisi de ne faire que l'audio pour cette phrase.
+    text_moore = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     sentence = relationship("Sentence", back_populates="translations")
@@ -79,3 +80,21 @@ class Recording(Base):
 
     translation = relationship("Translation", back_populates="recordings")
     contributor = relationship("Contributor", back_populates="recordings")
+
+
+class Payment(Base):
+    """Versement effectué à un contributeur — permet de savoir ce qui a
+    réellement été payé, distinct du montant simplement estimé."""
+
+    __tablename__ = "payments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    contributor_id = Column(UUID(as_uuid=True), ForeignKey("contributors.id"), nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(String(10), nullable=True)
+    note = Column(String(300), nullable=True)
+    # Identité de l'admin ayant enregistré le versement (référence un Contributor,
+    # cf. get_or_create_admin_contributor) — pas de relation ORM pour éviter
+    # l'ambiguïté des deux FK vers "contributors" sur ce modèle.
+    recorded_by_id = Column(UUID(as_uuid=True), ForeignKey("contributors.id"), nullable=True)
+    paid_at = Column(DateTime(timezone=True), server_default=func.now())

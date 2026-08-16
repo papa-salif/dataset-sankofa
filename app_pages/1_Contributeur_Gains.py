@@ -1,7 +1,7 @@
 import streamlit as st
 
 from src import repository
-from src.config import CURRENCY, DEFAULT_RATE_PER_MINUTE
+from src.config import CURRENCY, DEFAULT_RATE_PER_MINUTE, DEFAULT_RATE_PER_TEXT_TRANSLATION
 from src.db import SessionLocal
 
 
@@ -20,15 +20,23 @@ db.close()
 validated = summary["validated"]
 pending = summary["pending"]
 rejected = summary["rejected"]
+text_translations = summary["text_translations"]
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Enregistrements validés", validated["count"])
-col2.metric("Durée validée", format_duration(validated["duration_ms"]))
+audio_amount = DEFAULT_RATE_PER_MINUTE * (validated["duration_ms"] / 1000 / 60)
+text_amount = text_translations * DEFAULT_RATE_PER_TEXT_TRANSLATION
+total_amount = audio_amount + text_amount
 
-if DEFAULT_RATE_PER_MINUTE > 0:
-    amount = DEFAULT_RATE_PER_MINUTE * (validated["duration_ms"] / 1000 / 60)
-    col3.metric(f"Montant estimé ({CURRENCY})", round(amount, 2))
-    st.caption(f"Calculé au tarif de {DEFAULT_RATE_PER_MINUTE} {CURRENCY} / minute.")
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Audio validé", format_duration(validated["duration_ms"]))
+col2.metric("Traductions texte", text_translations)
+
+if DEFAULT_RATE_PER_MINUTE > 0 or DEFAULT_RATE_PER_TEXT_TRANSLATION > 0:
+    col3.metric(f"Montant estimé ({CURRENCY})", round(total_amount, 2))
+    col4.metric(f"— dont texte ({CURRENCY})", round(text_amount, 2))
+    st.caption(
+        f"Audio : {DEFAULT_RATE_PER_MINUTE} {CURRENCY} / minute validée · "
+        f"Texte : {DEFAULT_RATE_PER_TEXT_TRANSLATION} {CURRENCY} / traduction."
+    )
 else:
     col3.metric(f"Montant estimé ({CURRENCY})", "—")
     st.warning("Le tarif n'a pas encore été configuré par l'administrateur.")

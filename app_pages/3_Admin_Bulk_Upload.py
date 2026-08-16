@@ -26,12 +26,14 @@ with tab_batch:
             st.write(f"{len(rows)} phrases détectées :")
             st.dataframe(rows, use_container_width=True, hide_index=True)
 
-            default_source = st.text_input(
-                "Source par défaut (si non précisée dans le fichier)",
-                value=uploaded_file.name,
-            )
+            with st.form(key="bulk_import_form"):
+                default_source = st.text_input(
+                    "Source par défaut (si non précisée dans le fichier)",
+                    value=uploaded_file.name,
+                )
+                import_submitted = st.form_submit_button("✅ Importer ces phrases", type="primary")
 
-            if st.button("✅ Importer ces phrases", type="primary"):
+            if import_submitted:
                 db = SessionLocal()
                 created = repository.bulk_create_sentences(db, rows, default_source=default_source)
                 db.close()
@@ -41,19 +43,24 @@ with tab_batch:
 
 with tab_single:
     st.subheader("Ajouter une phrase")
-    text_fr = st.text_area("Phrase en français")
-    category = st.selectbox("Catégorie", DEFAULT_CATEGORIES, index=len(DEFAULT_CATEGORIES) - 1)
-    note = st.text_input("Note pour le contributeur (optionnel)")
-    source = st.text_input("Source (optionnel)")
+    with st.form(key="single_entry_form"):
+        text_fr = st.text_area("Phrase en français")
+        category = st.selectbox("Catégorie", DEFAULT_CATEGORIES, index=len(DEFAULT_CATEGORIES) - 1)
+        note = st.text_input("Note pour le contributeur (optionnel)")
+        source = st.text_input("Source (optionnel)")
+        single_submitted = st.form_submit_button("✅ Ajouter la phrase")
 
-    if st.button("✅ Ajouter la phrase", disabled=not text_fr.strip()):
-        db = SessionLocal()
-        repository.bulk_create_sentences(
-            db,
-            [{"text_fr": text_fr.strip(), "category": category, "note": note or None, "source": source or None}],
-        )
-        db.close()
-        st.success("Phrase ajoutée.")
+    if single_submitted:
+        if not text_fr.strip():
+            st.error("Écris la phrase en français avant de l'ajouter.")
+        else:
+            db = SessionLocal()
+            repository.bulk_create_sentences(
+                db,
+                [{"text_fr": text_fr.strip(), "category": category, "note": note or None, "source": source or None}],
+            )
+            db.close()
+            st.success("Phrase ajoutée.")
 
 st.divider()
 st.subheader("File d'ingestion récente")
