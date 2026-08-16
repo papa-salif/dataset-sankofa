@@ -3,6 +3,9 @@ sqlalchemy>=2.0
 psycopg2-binary>=2.9
 python-dotenv>=1.0
 pydub>=0.25
+# Python 3.13+ a retiré le module stdlib "audioop" dont pydub dépend ;
+# ce backport officiel le restaure (sans effet sur les versions antérieures).
+audioop-lts; python_version>="3.13"
 librosa>=0.10
 soundfile>=0.12
 numpy>=1.26
